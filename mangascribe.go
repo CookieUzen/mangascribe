@@ -8,12 +8,20 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	time "time"
 )
 
 const API = "https://api.mangadex.org"
+const EMPTY_VOLUME_NAME = "Extras"
 
+// Creates Manga struct from searching for a title in mangadex
+// TODO: Add support for searching for author
+// TODO: Add support for searching for tags
+// TODO: Add support for returning multiple results
 func searchManga(title string) (Manga, error) {
 	// Loading in URL
 	fullURL := fmt.Sprintf("%s/manga", API)
@@ -35,8 +43,8 @@ func searchManga(title string) (Manga, error) {
 	// Process the response into a Manga struct (get the first result)
 	var manga Manga
 
-	manga.id = outputManga.Data[0].ID
-	manga.name = outputManga.Data[0].Attributes.Title["en"]
+	manga.ID = outputManga.Data[0].ID
+	manga.Name = outputManga.Data[0].Attributes.Title["en"]
 
 	if err != nil {
 		fmt.Println("Failed to get manga:", err)
@@ -46,10 +54,11 @@ func searchManga(title string) (Manga, error) {
 	return manga, nil
 }
 
+// Gets a list of all the available chapters for a given Manga struct
 func getChapters(manga *Manga) error {
-	// Count the returned chapters versus total chapters
+	// Count the returned Chapters versus total Chapters
 	total := math.MaxInt
-	fullURL := fmt.Sprintf("%s/manga/%s/feed", API, manga.id)
+	fullURL := fmt.Sprintf("%s/manga/%s/feed", API, manga.ID)
 
 	for count := 0; ; {
 		// Send the request
@@ -74,23 +83,47 @@ func getChapters(manga *Manga) error {
 			return errors.New(outputManga.Response)
 		}
 
-		// Init the chapters array only once
+		// Init the Chapters array only once
 		if count == 0 {
-			manga.chapters = make([]Chapter, outputManga.Total)
+			manga.Chapters = make([]Chapter, outputManga.Total)
 		}
 
-		// Add the chapters to the manga
+		// Add the Chapters to the manga
 		for i, chapter := range outputManga.Data {
-			chapter := Chapter{
+			outputChapter := Chapter{
 				ID:                 chapter.ID,
 				Title:              chapter.Attributes.Title,
 				Chapter:            chapter.Attributes.Chapter,
 				Volume:             chapter.Attributes.Volume,
 				TranslatedLanguage: chapter.Attributes.TranslatedLanguage,
 				Pages:              chapter.Attributes.Pages,
+				Manga:              manga,
 			}
 
-			manga.chapters[i+count] = chapter
+			// If the chapter name is a float, rename to "Chapter #"
+			if _, err := strconv.ParseFloat(outputChapter.Chapter, 64); err == nil {
+				outputChapter.Chapter = "Chapter " + outputChapter.Chapter
+			}
+
+			// If the volume is empty, set it to "EMPTY_VOLUME_NAME"
+			if outputChapter.Volume == "" {
+				outputChapter.Volume = EMPTY_VOLUME_NAME
+			}
+
+			// If the volume is a float, convert it to "Volume #"
+			if _, err := strconv.ParseFloat(outputChapter.Volume, 64); err == nil {
+				outputChapter.Volume = "Volume " + outputChapter.Volume
+			}
+
+			// Find the Scanlation Group
+			for _, relationship := range chapter.Relationships {
+				if relationship.Type == "scanlation_group" {
+					chapter.Relationships[0] = relationship
+					break
+				}
+			}
+
+			manga.Chapters[i+count] = outputChapter
 		}
 
 		// Update the count
@@ -99,7 +132,7 @@ func getChapters(manga *Manga) error {
 		// Update the total
 		total = outputManga.Total
 
-		// If we have all the chapters, break
+		// If we have all the Chapters, break
 		if count >= total {
 			break
 		}
@@ -111,6 +144,9 @@ func getChapters(manga *Manga) error {
 	return nil
 }
 
+// Sends a GET request to the given URL with the given args
+// Returns the response body as a byte array
+// Tries 4 times before giving up, each attempt is n second apart
 func requestGET(fullURL string, args map[string]string) ([]byte, error) {
 	for i := 1; i < 5; i++ {
 		client := http.Client{}
@@ -163,10 +199,153 @@ func requestGET(fullURL string, args map[string]string) ([]byte, error) {
 	return []byte(""), errors.New("Failed to send request")
 }
 
+// Sorts the Chapters into Volumes
+// Can update the volume after fetching new Chapters
+// TODO: prioritize same scanlation group
+// TODO: move language selection here
+func chapterToVolume(manga *Manga) error {
+	// Init the Volumes map
+	manga.Volumes = make(Volume)
+
+	// Loop through the Chapters
+	for _, chapter := range manga.Chapters {
+
+		// Add the chapter to the volume
+		volumeName := chapter.Volume
+
+		// check if the volume exists
+		if _, ok := manga.Volumes[volumeName]; !ok {
+			manga.Volumes[volumeName] = make(map[string]Chapter)
+		}
+
+		// Check if the chapter exists inside the volume
+		if _, ok := manga.Volumes[volumeName][chapter.Chapter]; ok {
+			continue
+		}
+
+		// Add the chapter to the volume
+		manga.Volumes[volumeName][chapter.Chapter] = chapter
+	}
+
+	return nil
+}
+
+// Downloads the chapters inside the volume map for a manga
+// Note that this ignores the chapters array (no duplicate scanlations or languages)
+func downloadChapter(chapter Chapter, datasaver bool) error {
+
+	// Read the chapter ID
+	chapterID := chapter.ID
+
+	// Get the URL from at-home endpoint
+	args := map[string]string{
+		// "forcePort443": "true",
+	}
+
+	linksUnparsed, err := requestGET(API+"/at-home/server/"+chapterID, args)
+	if err != nil {
+		return fmt.Errorf("Failed to get chapter links: %w", err)
+	}
+
+	// Parse the response
+	var links downloadChapterRequest
+	err = json.Unmarshal(linksUnparsed, &links)
+	if err != nil {
+		return fmt.Errorf("Failed to parse chapter links: %w", err)
+	}
+
+	// Check for 404
+	if links.Result == "error" {
+		return fmt.Errorf("Failed to get chapter links: 404 does not exist")
+	}
+
+	// Get ready for download
+	URL := links.BaseURL
+	var linklist []string
+
+	if datasaver {
+		URL += "/data-saver/"
+		linklist = links.Chapter.DataSaver
+	} else {
+		URL += "/data/"
+		linklist = links.Chapter.Data
+	}
+
+	URL += links.Chapter.Hash + "/"
+
+	// Create the directory
+	err, dir := chapterFolderCreation(chapter)
+	if err != nil {
+		return fmt.Errorf("failed to create directory: %v", err)
+	}
+
+	// Download the files
+	for i, link := range linklist {
+		filename := fmt.Sprintf("%04d%s", i+1, filepath.Ext(link))
+
+		err = downloadFile(URL+link, filename, dir)
+		if err != nil {
+			return fmt.Errorf("failed to download link: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// Creates the folder for the chapter
+// Returns the path to the folder
+func chapterFolderCreation(chapter Chapter) (error, string) {
+	// Create the directory
+	dirPath := filepath.Join(".", chapter.Manga.Name, chapter.Volume, chapter.Chapter)
+	err := os.MkdirAll(dirPath, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create directory: %v", err), ""
+	}
+
+	return nil, dirPath
+}
+
+func downloadFile(url string, filename string, directory string) error {
+	// Create the file
+	file, err := os.Create(path.Join(directory, filename))
+	if err != nil {
+		return fmt.Errorf("failed to create file: %v", err)
+	}
+	defer file.Close()
+
+	for count := 1; count <= 5; count++ {
+		// Send HTTP GET request to the URL
+		response, err := http.Get(url)
+		if err != nil {
+			return fmt.Errorf("failed to download file: %v", err)
+		}
+		defer response.Body.Close()
+
+		// Check if the request was successful
+		if response.StatusCode != http.StatusOK {
+			time.Sleep(time.Duration(count) * time.Second)
+			continue
+		}
+
+		// Copy the response body to the file
+		_, err = io.Copy(file, response.Body)
+		if err != nil {
+			return fmt.Errorf("failed to save file: %v", err)
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("failed to download file")
+}
+
 func main() {
 	// Get the manga
 	manga, _ := searchManga("Komi-san")
 	getChapters(&manga)
+	chapterToVolume(&manga)
 
-	fmt.Println(manga)
+	// test download one chapter
+	downloadChapter(manga.Volumes["Volume 1"]["Chapter 1"], false)
+
 }

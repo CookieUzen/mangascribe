@@ -4,10 +4,13 @@ import (
 	"time"
 )
 
+type Volume map[string]map[string]Chapter
+
 type Manga struct {
-	id       string
-	name     string
-	chapters []Chapter
+	ID       string
+	Name     string
+	Chapters []Chapter
+	Volumes  Volume
 }
 
 type Chapter struct {
@@ -17,10 +20,13 @@ type Chapter struct {
 	Title              string
 	TranslatedLanguage string
 	Pages              int
+	ScanlationGroup    string
+	Manga              *Manga
+	VolumeGroup        *Volume // Pointer to current volume
 }
 
 type getChapterStruct struct {
-	ID         string `json:"id"`
+	ID         string `json:"ID"`
 	Type       string `json:"type"`
 	Attributes struct {
 		Volume             string    `json:"volume"`
@@ -36,7 +42,7 @@ type getChapterStruct struct {
 		Version            int       `json:"version"`
 	} `json:"attributes"`
 	Relationships []struct {
-		ID   string `json:"id"`
+		ID   string `json:"ID"`
 		Type string `json:"type"`
 	} `json:"relationships"`
 }
@@ -54,7 +60,7 @@ type searchMangaStruct struct {
 	Result   string `json:"result"`
 	Response string `json:"response"`
 	Data     []struct {
-		ID         string `json:"id"`
+		ID         string `json:"ID"`
 		Type       string `json:"type"`
 		Attributes struct {
 			Title                          map[string]string   `json:"title"`
@@ -72,16 +78,16 @@ type searchMangaStruct struct {
 			ChapterNumbersResetOnNewVolume bool                `json:"chapterNumbersResetOnNewVolume"`
 			LatestUploadedChapter          string              `json:"latestUploadedChapter"`
 			Tags                           []struct {
-				ID         string `json:"id"`
+				ID         string `json:"ID"`
 				Type       string `json:"type"`
 				Attributes struct {
-					Name        map[string]string `json:"name"`
+					Name        map[string]string `json:"Name"`
 					Description map[string]string `json:"description"`
 					Group       string            `json:"group"`
 					Version     int               `json:"version"`
 				} `json:"attributes"`
 				Relationships []struct {
-					ID         string `json:"id"`
+					ID         string `json:"ID"`
 					Type       string `json:"type"`
 					Related    string `json:"related"`
 					Attributes struct {
@@ -94,7 +100,7 @@ type searchMangaStruct struct {
 			UpdatedAt string `json:"updatedAt"`
 		} `json:"attributes"`
 		Relationships []struct {
-			ID         string `json:"id"`
+			ID         string `json:"ID"`
 			Type       string `json:"type"`
 			Related    string `json:"related"`
 			Attributes struct {
@@ -104,4 +110,14 @@ type searchMangaStruct struct {
 	Limit  int `json:"limit"`
 	Offset int `json:"offset"`
 	Total  int `json:"total"`
+}
+
+type downloadChapterRequest struct {
+	Result  string `json:"result"`
+	BaseURL string `json:"baseUrl"`
+	Chapter struct {
+		Hash      string   `json:"hash"`
+		Data      []string `json:"data"`
+		DataSaver []string `json:"dataSaver"`
+	} `json:"chapter"`
 }
