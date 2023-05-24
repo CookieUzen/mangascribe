@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"github.com/golang/glog"
 	"io"
 	"math"
 	"net/http"
@@ -12,11 +14,13 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
-	time "time"
+	"time"
 )
 
 const API = "https://api.mangadex.org"
 const EMPTY_VOLUME_NAME = "Extras"
+
+// TODO finetune -v levels
 
 // Creates Manga struct from searching for a title in mangadex
 // TODO: Add support for searching for author
@@ -27,16 +31,20 @@ func searchManga(title string) (Manga, error) {
 	fullURL := fmt.Sprintf("%s/manga", API)
 
 	// Send the request
+	glog.Info("Searching for manga: ", title)
 	body, err := requestGET(fullURL, map[string]string{
 		"title": title,
 		"limit": "1",
 	})
+	if err != nil {
+		glog.Error("Failed to send manga search request:", err)
+	}
 
 	// parse the response as a searchMangaStruct
 	var outputManga searchMangaStruct
 	err = json.Unmarshal(body, &outputManga)
 	if err != nil {
-		fmt.Println("Failed to parse response:", err)
+		glog.Error("Failed to parse response:", err)
 		return Manga{}, err
 	}
 
@@ -45,11 +53,6 @@ func searchManga(title string) (Manga, error) {
 
 	manga.ID = outputManga.Data[0].ID
 	manga.Name = outputManga.Data[0].Attributes.Title["en"]
-
-	if err != nil {
-		fmt.Println("Failed to get manga:", err)
-		return Manga{}, err
-	}
 
 	return manga, nil
 }
@@ -60,12 +63,18 @@ func (manga *Manga) getChapters() error {
 	total := math.MaxInt
 	fullURL := fmt.Sprintf("%s/manga/%s/feed", API, manga.ID)
 
-	for count := 0; ; {
+	count := 0
+	page := 0
+
+	for {
 		// Send the request
+		glog.Info("Fetching page ", page)
 		body, err := requestGET(fullURL, map[string]string{
 			"offset":               strconv.Itoa(count),
-			"translatedLanguage[]": `en`,
+			"translatedLanguage[]": `en`, // TODO: add other options
 		})
+
+		// If the request failed, pass the error up
 		if err != nil {
 			return err
 		}
@@ -74,13 +83,15 @@ func (manga *Manga) getChapters() error {
 		var outputManga mangaResponse
 		err = json.Unmarshal(body, &outputManga)
 		if err != nil {
-			fmt.Println("Failed to parse response:", err)
+			glog.Error("Failed to parse response:", err)
 			return err
 		}
 
 		// If mangadex is not happy with the request
 		if outputManga.Result == "error" {
-			return errors.New(outputManga.Response)
+			err := errors.New(outputManga.Response)
+			glog.Error("Mangadex returned an error when fetching chapters: ", err)
+			return err
 		}
 
 		// Init the Chapters array only once
@@ -132,8 +143,12 @@ func (manga *Manga) getChapters() error {
 		// Update the total
 		total = outputManga.Total
 
+		// Increment the page
+		page++
+
 		// If we have all the Chapters, break
 		if count >= total {
+			glog.Info("Found ", count, " chapters, Done.")
 			break
 		}
 
@@ -148,13 +163,14 @@ func (manga *Manga) getChapters() error {
 // Returns the response body as a byte array
 // Tries 4 times before giving up, each attempt is n second apart
 func requestGET(fullURL string, args map[string]string) ([]byte, error) {
+	glog.Info("Sending GET request to ", fullURL, "\nParams: ", args, "\n")
 	for i := 1; i < 5; i++ {
 		client := http.Client{}
 
 		// Loading in URL
 		u, err := url.Parse(fullURL)
 		if err != nil {
-			fmt.Println("Failed to parse URL", err)
+			glog.Error("Failed to parse URL", err)
 			return []byte(""), err
 		}
 
@@ -171,15 +187,14 @@ func requestGET(fullURL string, args map[string]string) ([]byte, error) {
 		// GET
 		req, err := http.NewRequest("GET", u.String(), nil)
 		if err != nil {
-			fmt.Println("Failed to create request:", err)
+			glog.Error("Failed to create request:", err)
 			return []byte(""), err
 		}
 
 		// Response
 		resp, err := client.Do(req)
 		if err != nil || resp.StatusCode != 200 {
-			fmt.Println("Failed to send request:", err)
-			fmt.Println("Retrying after " + strconv.Itoa(i) + " seconds")
+			glog.Warning("Non 200 response: ", err, "\nRetrying after "+strconv.Itoa(i)+" seconds")
 			time.Sleep(time.Duration(i) * time.Second)
 			continue
 		}
@@ -189,14 +204,17 @@ func requestGET(fullURL string, args map[string]string) ([]byte, error) {
 		// Read the response body
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			fmt.Println("Failed to read response body:", err)
+			glog.Error("Failed to read response body from request:", err)
 			return []byte(""), err
 		}
 
+		glog.Info("Successfully sent request, data received")
 		return body, nil
 	}
 
-	return []byte(""), errors.New("Failed to send request")
+	err := errors.New("Failed to send request after 4 attempts")
+	glog.Error(err)
+	return []byte(""), err
 }
 
 // Sorts the Chapters into Volumes
@@ -244,19 +262,27 @@ func (chapter Chapter) download(datasaver bool) error {
 
 	linksUnparsed, err := requestGET(API+"/at-home/server/"+chapterID, args)
 	if err != nil {
-		return fmt.Errorf("Failed to get chapter links: %w", err)
+		errText := fmt.Sprintf("Failed to get chapter links: %w", err)
+		err = errors.New(errText)
+		glog.Error(err)
+		return err
 	}
 
 	// Parse the response
 	var links downloadChapterRequest
 	err = json.Unmarshal(linksUnparsed, &links)
 	if err != nil {
-		return fmt.Errorf("Failed to parse chapter links: %w", err)
+		errText := fmt.Sprintf("Failed to parse chapter links: %w", err)
+		err = errors.New(errText)
+		glog.Error(err)
+		return err
 	}
 
 	// Check for 404
 	if links.Result == "error" {
-		return fmt.Errorf("Failed to get chapter links: 404 does not exist")
+		err = errors.New("Failed to get chapter links: chapter id does not exist")
+		glog.Error(err)
+		return err
 	}
 
 	// Get ready for download
@@ -276,7 +302,10 @@ func (chapter Chapter) download(datasaver bool) error {
 	// Create the directory
 	err, dir := chapter.chapterFolderCreation()
 	if err != nil {
-		return fmt.Errorf("failed to create directory: %v", err)
+		errText := fmt.Sprintf("Failed to create directory: %w", err)
+		err = errors.New(errText)
+		glog.Error(err)
+		return err
 	}
 
 	// Download the files
@@ -285,10 +314,14 @@ func (chapter Chapter) download(datasaver bool) error {
 
 		err = downloadFile(URL+link, filename, dir)
 		if err != nil {
-			return fmt.Errorf("failed to download link: %v", err)
+			errText := fmt.Sprintf("failed to download link: %v", err)
+			err = errors.New(errText)
+			glog.Error(err)
+			return err
 		}
 	}
 
+	glog.Info("Successfully downloaded chapter ", chapter.Chapter)
 	return nil
 }
 
@@ -299,7 +332,10 @@ func (chapter Chapter) chapterFolderCreation() (error, string) {
 	dirPath := filepath.Join(".", chapter.Manga.Name, chapter.Volume, chapter.Chapter)
 	err := os.MkdirAll(dirPath, 0755)
 	if err != nil {
-		return fmt.Errorf("failed to create directory: %v", err), ""
+		errText := fmt.Sprintf("Failed to create directory: %w", err)
+		err = errors.New(errText)
+		glog.Error(err)
+		return err, ""
 	}
 
 	return nil, dirPath
@@ -309,7 +345,10 @@ func downloadFile(url string, filename string, directory string) error {
 	// Create the file
 	file, err := os.Create(path.Join(directory, filename))
 	if err != nil {
-		return fmt.Errorf("failed to create file: %v", err)
+		errText := fmt.Sprintf("Failed to create file: %w", err)
+		err = errors.New(errText)
+		glog.Error(err)
+		return err
 	}
 	defer file.Close()
 
@@ -317,38 +356,57 @@ func downloadFile(url string, filename string, directory string) error {
 		// Send HTTP GET request to the URL
 		response, err := http.Get(url)
 		if err != nil {
-			return fmt.Errorf("failed to download file: %v", err)
-		}
-		defer response.Body.Close()
-
-		// Check if the request was successful
-		if response.StatusCode != http.StatusOK {
+			errText := fmt.Sprintf("Failed to send GET request: %w", err)
+			err = errors.New(errText)
+			debugText := fmt.Sprintf("\nFilename: %w, url: %w\nretrying in %d seconds", filename, url, count)
+			glog.Warning(err, debugText)
 			time.Sleep(time.Duration(count) * time.Second)
 			continue
 		}
+		defer response.Body.Close()
 
 		// Copy the response body to the file
 		_, err = io.Copy(file, response.Body)
 		if err != nil {
-			return fmt.Errorf("failed to save file: %v", err)
+			errText := fmt.Sprintf("Failed to save file: %w", err)
+			err = errors.New(errText)
+			glog.Error(err)
+			return err
 		}
 
 		return nil
 	}
 
-	return fmt.Errorf("failed to download file")
+	errText := fmt.Sprintf("Failed to download file: ", filename, " from ", url)
+	err = errors.New(errText)
+	glog.Error(err)
+	return err
 }
 
 // This downloads all the chapters in a volume
 func (volume *Volume) download() error {
+	var volumeName string
+
 	// loops through the map
+	count := 0
 	for _, chapter := range *volume {
+		// Get the volume name
+		if count == 0 {
+			volumeName = chapter.Volume
+		}
+
 		err := chapter.download(false)
 		if err != nil {
-			return fmt.Errorf("failed to download chapter: %v", err)
+			errText := fmt.Sprintf("failed to download chapter: %v", err)
+			err = errors.New(errText)
+			glog.Error(err)
+			return err
 		}
+
+		count++
 	}
 
+	glog.Info("Successfully downloaded volume: ", volumeName)
 	return nil
 }
 
@@ -358,14 +416,21 @@ func (manga *Manga) download() error {
 	for _, volume := range manga.Volumes {
 		err := volume.download()
 		if err != nil {
-			return fmt.Errorf("failed to download volume: %v", err)
+			errText := fmt.Sprintf("failed to download volume: %v", err)
+			err = errors.New(errText)
+			glog.Error(err)
+			return err
 		}
 	}
 
+	glog.Info("Successfully downloaded manga: ", manga.Name)
 	return nil
 }
 
 func main() {
+	// For logging flags
+	flag.Parse()
+
 	// Get the manga
 	manga, _ := searchManga("The Angel Next Door Spoils me rotten")
 	manga.getChapters()
@@ -377,4 +442,6 @@ func main() {
 	// test download manga
 	manga.download()
 
+	// Flush logs
+	glog.Flush()
 }
