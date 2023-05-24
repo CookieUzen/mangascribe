@@ -4,13 +4,13 @@ import (
 	"time"
 )
 
-type Volume map[string]map[string]Chapter
+type Volume map[string]Chapter
 
 type Manga struct {
 	ID       string
 	Name     string
 	Chapters []Chapter
-	Volumes  Volume
+	Volumes  map[string]Volume
 }
 
 type Chapter struct {

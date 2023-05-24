@@ -55,7 +55,7 @@ func searchManga(title string) (Manga, error) {
 }
 
 // Gets a list of all the available chapters for a given Manga struct
-func getChapters(manga *Manga) error {
+func (manga *Manga) getChapters() error {
 	// Count the returned Chapters versus total Chapters
 	total := math.MaxInt
 	fullURL := fmt.Sprintf("%s/manga/%s/feed", API, manga.ID)
@@ -203,9 +203,9 @@ func requestGET(fullURL string, args map[string]string) ([]byte, error) {
 // Can update the volume after fetching new Chapters
 // TODO: prioritize same scanlation group
 // TODO: move language selection here
-func chapterToVolume(manga *Manga) error {
+func (manga *Manga) chapterToVolume() error {
 	// Init the Volumes map
-	manga.Volumes = make(Volume)
+	manga.Volumes = make(map[string]Volume)
 
 	// Loop through the Chapters
 	for _, chapter := range manga.Chapters {
@@ -232,7 +232,7 @@ func chapterToVolume(manga *Manga) error {
 
 // Downloads the chapters inside the volume map for a manga
 // Note that this ignores the chapters array (no duplicate scanlations or languages)
-func downloadChapter(chapter Chapter, datasaver bool) error {
+func (chapter Chapter) download(datasaver bool) error {
 
 	// Read the chapter ID
 	chapterID := chapter.ID
@@ -274,7 +274,7 @@ func downloadChapter(chapter Chapter, datasaver bool) error {
 	URL += links.Chapter.Hash + "/"
 
 	// Create the directory
-	err, dir := chapterFolderCreation(chapter)
+	err, dir := chapter.chapterFolderCreation()
 	if err != nil {
 		return fmt.Errorf("failed to create directory: %v", err)
 	}
@@ -294,7 +294,7 @@ func downloadChapter(chapter Chapter, datasaver bool) error {
 
 // Creates the folder for the chapter
 // Returns the path to the folder
-func chapterFolderCreation(chapter Chapter) (error, string) {
+func (chapter Chapter) chapterFolderCreation() (error, string) {
 	// Create the directory
 	dirPath := filepath.Join(".", chapter.Manga.Name, chapter.Volume, chapter.Chapter)
 	err := os.MkdirAll(dirPath, 0755)
@@ -339,13 +339,42 @@ func downloadFile(url string, filename string, directory string) error {
 	return fmt.Errorf("failed to download file")
 }
 
+// This downloads all the chapters in a volume
+func (volume *Volume) download() error {
+	// loops through the map
+	for _, chapter := range *volume {
+		err := chapter.download(false)
+		if err != nil {
+			return fmt.Errorf("failed to download chapter: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// This downloads all the volumes in a chapter
+func (manga *Manga) download() error {
+	// loop through all the volumes
+	for _, volume := range manga.Volumes {
+		err := volume.download()
+		if err != nil {
+			return fmt.Errorf("failed to download volume: %v", err)
+		}
+	}
+
+	return nil
+}
+
 func main() {
 	// Get the manga
-	manga, _ := searchManga("Komi-san")
-	getChapters(&manga)
-	chapterToVolume(&manga)
+	manga, _ := searchManga("The Angel Next Door Spoils me rotten")
+	manga.getChapters()
+	manga.chapterToVolume()
 
 	// test download one chapter
-	downloadChapter(manga.Volumes["Volume 1"]["Chapter 1"], false)
+	// manga.Volumes["Volume 1"]["Chapter 1"].download(false)
+
+	// test download manga
+	manga.download()
 
 }
