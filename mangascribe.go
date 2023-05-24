@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/golang/glog"
+	"hash/crc32"
 	"io"
 	"math"
 	"net/http"
@@ -21,6 +22,7 @@ const API = "https://api.mangadex.org"
 const EMPTY_VOLUME_NAME = "Extras"
 
 // TODO finetune -v levels
+// TODO fix glog error passing
 
 // Creates Manga struct from searching for a title in mangadex
 // TODO: Add support for searching for author
@@ -107,8 +109,9 @@ func (manga *Manga) getChapters() error {
 				Chapter:            chapter.Attributes.Chapter,
 				Volume:             chapter.Attributes.Volume,
 				TranslatedLanguage: chapter.Attributes.TranslatedLanguage,
-				Pages:              chapter.Attributes.Pages,
+				PageNumber:         chapter.Attributes.Pages,
 				Manga:              manga,
+				Pages:              make([]Page, chapter.Attributes.Pages),
 			}
 
 			// If the chapter name is a float, rename to "Chapter #"
@@ -221,6 +224,7 @@ func requestGET(fullURL string, args map[string]string) ([]byte, error) {
 // Can update the volume after fetching new Chapters
 // TODO: prioritize same scanlation group
 // TODO: move language selection here
+// TODO: skip official chapters with non mangadex links
 func (manga *Manga) chapterToVolume() error {
 	// Init the Volumes map
 	manga.Volumes = make(map[string]Volume)
@@ -299,7 +303,17 @@ func (chapter Chapter) download(datasaver bool) error {
 
 	URL += links.Chapter.Hash + "/"
 
-	// Create the directory
+	// Create the tmp directory to download into
+	tempDir, err := os.MkdirTemp("", chapter.Title)
+	if err != nil {
+		errText := fmt.Sprintf("Failed to create temporary directory: %w", err)
+		err = errors.New(errText)
+		glog.Error(err)
+		return err
+	}
+	defer os.RemoveAll(tempDir) // Clean up the temporary directory when done
+
+	// Create the destination directory
 	err, dir := chapter.chapterFolderCreation()
 	if err != nil {
 		errText := fmt.Sprintf("Failed to create directory: %w", err)
@@ -308,20 +322,67 @@ func (chapter Chapter) download(datasaver bool) error {
 		return err
 	}
 
-	// Download the files
+	// Download the files into the tmp directory
 	for i, link := range linklist {
 		filename := fmt.Sprintf("%04d%s", i+1, filepath.Ext(link))
 
-		err = downloadFile(URL+link, filename, dir)
+		// Open the origFile for reading and writing
+		filePath := filepath.Join(dir, filename)
+		origFile, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			errText := fmt.Sprintf("Failed to open origFile: %w", err)
+			glog.Error(errors.New(errText))
+			return err
+		}
+		defer origFile.Close()
+
+		// Check if the origFile in the directory matches the hash in the chapter
+		// If it does, skip the download
+		if currentHash := chapter.Pages[i].Hash; currentHash != "" {
+
+			// Hash the origFile
+			fileHash, err := hashFile(origFile)
+			if err != nil {
+				glog.Error(err)
+				return err
+			}
+
+			if fileHash == currentHash {
+				glog.Info("Skipping page ", i+1, " as it already exists")
+				continue
+			}
+		}
+
+		hash, downloadedFile, err := downloadFile(URL+link, filename, tempDir)
 		if err != nil {
 			errText := fmt.Sprintf("failed to download link: %v", err)
 			err = errors.New(errText)
 			glog.Error(err)
 			return err
 		}
+		defer downloadedFile.Close()
+
+		// Update the page
+		page := Page{
+			Hash: hash,
+			Page: i,
+		}
+		chapter.Pages[i] = page
+
+		// Copy the file to the destination directory
+		_, err = io.Copy(origFile, downloadedFile)
+		if err != nil {
+			errText := fmt.Sprintf("Failed to copy file: %w", err)
+			err = errors.New(errText)
+			glog.Error(err)
+			return err
+		}
 	}
 
-	glog.Info("Successfully downloaded chapter ", chapter.Chapter)
+	// Update the chapter
+	chapter.DownloadPath = dir
+
+	glog.Info("Successfully downloaded chapter ", chapter.Chapter, "at ", dir)
 	return nil
 }
 
@@ -341,14 +402,31 @@ func (chapter Chapter) chapterFolderCreation() (error, string) {
 	return nil, dirPath
 }
 
-func downloadFile(url string, filename string, directory string) error {
+// Hashes a file, accepts a io.Reader interface
+func hashFile(response io.Reader) (string, error) {
+	crcHash := crc32.NewIEEE()
+
+	_, err := io.Copy(crcHash, response)
+	if err != nil {
+		errText := fmt.Sprintf("Failed to hash response body: %w", err)
+		err = errors.New(errText)
+		glog.Error(err)
+		return "", err
+	}
+
+	checksum := strconv.FormatUint(uint64(crcHash.Sum32()), 16)
+	return checksum, nil
+}
+
+// Downloads a file from a url and returns an io.ReadCloser for later copying
+func downloadFile(url string, filename string, directory string) (string, io.ReadCloser, error) {
 	// Create the file
 	file, err := os.Create(path.Join(directory, filename))
 	if err != nil {
 		errText := fmt.Sprintf("Failed to create file: %w", err)
 		err = errors.New(errText)
 		glog.Error(err)
-		return err
+		return "", nil, err
 	}
 	defer file.Close()
 
@@ -363,24 +441,17 @@ func downloadFile(url string, filename string, directory string) error {
 			time.Sleep(time.Duration(count) * time.Second)
 			continue
 		}
-		defer response.Body.Close()
 
-		// Copy the response body to the file
-		_, err = io.Copy(file, response.Body)
-		if err != nil {
-			errText := fmt.Sprintf("Failed to save file: %w", err)
-			err = errors.New(errText)
-			glog.Error(err)
-			return err
-		}
+		// Hash the response body
+		checksum, err := hashFile(response.Body)
 
-		return nil
+		return checksum, response.Body, nil
 	}
 
-	errText := fmt.Sprintf("Failed to download file: ", filename, " from ", url)
+	errText := fmt.Sprintf("Failed to download file: %v from %v", filename, url)
 	err = errors.New(errText)
 	glog.Error(err)
-	return err
+	return "", nil, err
 }
 
 // This downloads all the chapters in a volume
@@ -441,6 +512,9 @@ func main() {
 
 	// test download manga
 	manga.download()
+
+	// Test hash function
+	manga.Volumes["Volume 1"]["Chapter 1"].download(false)
 
 	// Flush logs
 	glog.Flush()

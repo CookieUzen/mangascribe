@@ -19,10 +19,17 @@ type Chapter struct {
 	Chapter            string
 	Title              string
 	TranslatedLanguage string
-	Pages              int
+	PageNumber         int
 	ScanlationGroup    string
 	Manga              *Manga
 	VolumeGroup        *Volume // Pointer to current volume
+	DownloadPath       string
+	Pages              []Page // 0 indexed
+}
+
+type Page struct {
+	Page int
+	Hash string
 }
 
 type getChapterStruct struct {
