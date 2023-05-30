@@ -4,13 +4,16 @@ import (
 	"time"
 )
 
-type Volume map[string]Chapter
+type Volume struct {
+	Name     string
+	Chapters []Chapter
+}
 
 type Manga struct {
 	ID       string
 	Name     string
 	Chapters []Chapter
-	Volumes  map[string]Volume
+	Volumes  []Volume
 }
 
 type Chapter struct {
@@ -28,8 +31,9 @@ type Chapter struct {
 }
 
 type Page struct {
-	Page int
-	Hash string
+	Page     int
+	FileName string
+	Hash     string
 }
 
 type getChapterStruct struct {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -226,8 +227,8 @@ func requestGET(fullURL string, args map[string]string) ([]byte, error) {
 // TODO: move language selection here
 // TODO: skip official chapters with non mangadex links
 func (manga *Manga) chapterToVolume() error {
-	// Init the Volumes map
-	manga.Volumes = make(map[string]Volume)
+	// Init the Volumes array
+	manga.Volumes = make([]Volume, 0)
 
 	// Loop through the Chapters
 	for _, chapter := range manga.Chapters {
@@ -235,18 +236,32 @@ func (manga *Manga) chapterToVolume() error {
 		// Add the chapter to the volume
 		volumeName := chapter.Volume
 
-		// check if the volume exists
-		if _, ok := manga.Volumes[volumeName]; !ok {
-			manga.Volumes[volumeName] = make(map[string]Chapter)
+		// Bruteforce search for now before migration to db
+		// Finding the volume the chapter belongs to
+		for volumeid, volume := range manga.Volumes {
+			if volume.Name == volumeName {
+				// Check if the chapter exists inside the volume
+				exists := false
+				for _, chapter := range volume.Chapters {
+					if chapter.ID == chapter.ID {
+						exists = true
+						break
+					}
+				}
+				if exists {
+					break
+				}
+				// Add the chapter to the volume
+				manga.Volumes[volumeid].Chapters = append(volume.Chapters, chapter)
+				break
+			}
 		}
 
-		// Check if the chapter exists inside the volume
-		if _, ok := manga.Volumes[volumeName][chapter.Chapter]; ok {
-			continue
-		}
-
-		// Add the chapter to the volume
-		manga.Volumes[volumeName][chapter.Chapter] = chapter
+		// If the volume doesn't exist, create it
+		manga.Volumes = append(manga.Volumes, Volume{
+			volumeName,
+			[]Chapter{chapter},
+		})
 	}
 
 	return nil
@@ -254,7 +269,7 @@ func (manga *Manga) chapterToVolume() error {
 
 // Downloads the chapters inside the volume map for a manga
 // Note that this ignores the chapters array (no duplicate scanlations or languages)
-func (chapter Chapter) download(datasaver bool) error {
+func (chapter *Chapter) download(datasaver bool) error {
 
 	// Read the chapter ID
 	chapterID := chapter.ID
@@ -352,7 +367,8 @@ func (chapter Chapter) download(datasaver bool) error {
 				continue
 			}
 		}
-
+		origFile.Close()
+		origFile, err = os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		hash, downloadedFile, err := downloadFile(URL+link, filename, tempDir)
 		if err != nil {
 			errText := fmt.Sprintf("failed to download link: %v", err)
@@ -360,12 +376,12 @@ func (chapter Chapter) download(datasaver bool) error {
 			glog.Error(err)
 			return err
 		}
-		defer downloadedFile.Close()
 
 		// Update the page
 		page := Page{
-			Hash: hash,
-			Page: i,
+			Hash:     hash,
+			FileName: filename,
+			Page:     i,
 		}
 		chapter.Pages[i] = page
 
@@ -382,7 +398,7 @@ func (chapter Chapter) download(datasaver bool) error {
 	// Update the chapter
 	chapter.DownloadPath = dir
 
-	glog.Info("Successfully downloaded chapter ", chapter.Chapter, "at ", dir)
+	glog.Info("Successfully downloaded chapter ", chapter.Chapter, " at ", dir)
 	return nil
 }
 
@@ -407,6 +423,7 @@ func hashFile(response io.Reader) (string, error) {
 	crcHash := crc32.NewIEEE()
 
 	_, err := io.Copy(crcHash, response)
+
 	if err != nil {
 		errText := fmt.Sprintf("Failed to hash response body: %w", err)
 		err = errors.New(errText)
@@ -419,7 +436,7 @@ func hashFile(response io.Reader) (string, error) {
 }
 
 // Downloads a file from a url and returns an io.ReadCloser for later copying
-func downloadFile(url string, filename string, directory string) (string, io.ReadCloser, error) {
+func downloadFile(url string, filename string, directory string) (string, io.Reader, error) {
 	// Create the file
 	file, err := os.Create(path.Join(directory, filename))
 	if err != nil {
@@ -441,11 +458,12 @@ func downloadFile(url string, filename string, directory string) (string, io.Rea
 			time.Sleep(time.Duration(count) * time.Second)
 			continue
 		}
-
+		var buf bytes.Buffer
+		dup := io.TeeReader(response.Body, &buf)
 		// Hash the response body
-		checksum, err := hashFile(response.Body)
+		checksum, err := hashFile(dup)
 
-		return checksum, response.Body, nil
+		return checksum, &buf, nil
 	}
 
 	errText := fmt.Sprintf("Failed to download file: %v from %v", filename, url)
@@ -458,9 +476,9 @@ func downloadFile(url string, filename string, directory string) (string, io.Rea
 func (volume *Volume) download() error {
 	var volumeName string
 
-	// loops through the map
+	// loops through the chapters
 	count := 0
-	for _, chapter := range *volume {
+	for _, chapter := range volume.Chapters {
 		// Get the volume name
 		if count == 0 {
 			volumeName = chapter.Volume
@@ -507,14 +525,14 @@ func main() {
 	manga.getChapters()
 	manga.chapterToVolume()
 
-	// test download one chapter
-	// manga.Volumes["Volume 1"]["Chapter 1"].download(false)
-
 	// test download manga
-	manga.download()
+	// manga.download()
 
-	// Test hash function
-	manga.Volumes["Volume 1"]["Chapter 1"].download(false)
+	// test download one volume
+	manga.Volumes[0].download()
+
+	// Test hash function; this should skip download via hash
+	manga.Volumes[0].Chapters[0].download(false)
 
 	// Flush logs
 	glog.Flush()
