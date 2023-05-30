@@ -232,36 +232,43 @@ func (manga *Manga) chapterToVolume() error {
 
 	// Loop through the Chapters
 	for _, chapter := range manga.Chapters {
+		chapter.VolumeGroup = &manga.Volumes
 
-		// Add the chapter to the volume
 		volumeName := chapter.Volume
 
-		// Bruteforce search for now before migration to db
-		// Finding the volume the chapter belongs to
-		for volumeid, volume := range manga.Volumes {
+		// Check if the volume exists
+		done := false
+		for i, volume := range manga.Volumes {
 			if volume.Name == volumeName {
-				// Check if the chapter exists inside the volume
-				exists := false
-				for _, chapter := range volume.Chapters {
-					if chapter.ID == chapter.ID {
-						exists = true
+				done = true
+				skip := false
+
+				// Check if the chapter already exists
+				for _, c := range manga.Volumes[i].Chapters {
+					if c.Chapter == chapter.Chapter {
+						skip = true
 						break
 					}
 				}
-				if exists {
+				if skip {
 					break
 				}
+
 				// Add the chapter to the volume
-				manga.Volumes[volumeid].Chapters = append(volume.Chapters, chapter)
+				manga.Volumes[i].Chapters = append(manga.Volumes[i].Chapters, chapter)
 				break
 			}
 		}
+		if done {
+			continue
+		}
 
-		// If the volume doesn't exist, create it
-		manga.Volumes = append(manga.Volumes, Volume{
-			volumeName,
-			[]Chapter{chapter},
-		})
+		// Create a new volume and add the chapter if it doesn't exist
+		volume := Volume{
+			Name:     volumeName,
+			Chapters: []Chapter{chapter},
+		}
+		manga.Volumes = append(manga.Volumes, volume)
 	}
 
 	return nil
@@ -319,7 +326,7 @@ func (chapter *Chapter) download(datasaver bool) error {
 	URL += links.Chapter.Hash + "/"
 
 	// Create the tmp directory to download into
-	tempDir, err := os.MkdirTemp("", chapter.Title)
+	tempDir, err := os.MkdirTemp("", chapter.Manga.Name+chapter.Volume+chapter.Chapter)
 	if err != nil {
 		errText := fmt.Sprintf("Failed to create temporary directory: %w", err)
 		err = errors.New(errText)
@@ -529,10 +536,18 @@ func main() {
 	// manga.download()
 
 	// test download one volume
-	manga.Volumes[0].download()
+	// manga.Volumes[0].download()
 
 	// Test hash function; this should skip download via hash
-	manga.Volumes[0].Chapters[0].download(false)
+	// manga.Volumes[0].Chapters[0].download(false)
+
+	// List all the volumes and their chapter
+	for _, volume := range manga.Volumes {
+		fmt.Println(volume.Name)
+		for _, chapter := range volume.Chapters {
+			fmt.Println(chapter.Chapter)
+		}
+	}
 
 	// Flush logs
 	glog.Flush()

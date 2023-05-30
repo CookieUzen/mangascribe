@@ -25,7 +25,7 @@ type Chapter struct {
 	PageNumber         int
 	ScanlationGroup    string
 	Manga              *Manga
-	VolumeGroup        *Volume // Pointer to current volume
+	VolumeGroup        *[]Volume // Pointer to current volume
 	DownloadPath       string
 	Pages              []Page // 0 indexed
 }
