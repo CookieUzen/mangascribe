@@ -1,40 +1,6 @@
-package main
+package MangaDex
 
-import (
-	"time"
-)
-
-type Volume struct {
-	Name     string
-	Chapters []Chapter
-}
-
-type Manga struct {
-	ID       string
-	Name     string
-	Chapters []Chapter
-	Volumes  []Volume
-}
-
-type Chapter struct {
-	ID                 string
-	Volume             string
-	Chapter            string
-	Title              string
-	TranslatedLanguage string
-	PageNumber         int
-	ScanlationGroup    string
-	Manga              *Manga
-	VolumeGroup        *[]Volume // Pointer to current volume
-	DownloadPath       string
-	Pages              []Page // 0 indexed
-}
-
-type Page struct {
-	Page     int
-	FileName string
-	Hash     string
-}
+import "time"
 
 type getChapterStruct struct {
 	ID         string `json:"ID"`
@@ -58,7 +24,7 @@ type getChapterStruct struct {
 	} `json:"relationships"`
 }
 
-type mangaResponse struct {
+type MangaResponse struct {
 	Result   string             `json:"result"`
 	Response string             `json:"response"`
 	Data     []getChapterStruct `json:"data"`
@@ -123,7 +89,7 @@ type searchMangaStruct struct {
 	Total  int `json:"total"`
 }
 
-type downloadChapterRequest struct {
+type DownloadChapterRequest struct {
 	Result  string `json:"result"`
 	BaseURL string `json:"baseUrl"`
 	Chapter struct {
