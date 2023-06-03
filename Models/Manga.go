@@ -1,125 +1,49 @@
 package Models
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/CookieUzen/mangascribe/Config"
-	"github.com/CookieUzen/mangascribe/MangaDex"
-	"github.com/CookieUzen/mangascribe/Tools"
 	"github.com/golang/glog"
 	"gorm.io/gorm"
-	"math"
-	"strconv"
-	"time"
 )
 
 type Manga struct {
 	gorm.Model
-	ID       string `gorm:"primaryKey:false"`
-	Name     string
-	Chapters []Chapter `gorm:"foreignKey:MangaID"`
-	Volumes  []Volume  `gorm:"foreignKey:MangaID"`
+	ID          string `gorm:"primaryKey:false"`
+	Name        string
+	Chapters    []Chapter `gorm:"foreignKey:MangaID"`
+	Volumes     []Volume  `gorm:"foreignKey:MangaID"`
+	APIProvider string
 }
 
 // Gets a list of all the available chapters for a given Manga struct
-func (manga *Manga) getChapters() error {
-	// Count the returned Chapters versus total Chapters
-	total := math.MaxInt
-	fullURL := fmt.Sprintf("%s/manga/%s/feed", Config.API, manga.ID)
+func (manga *Manga) GetChapters(API APIProvider, replace bool) error {
+	chapters, err := API.FetchChapters(manga.ID)
+	if err != nil {
+		glog.Error(errors.New("failed to fetch chapters"))
+		return err
+	}
 
-	count := 0
-	page := 0
+	if replace {
+		manga.Chapters = chapters
+		return nil
+	}
 
-	for {
-		// Send the request
-		glog.Info("Fetching page ", page)
-		body, err := Tools.RequestGET(fullURL, map[string]string{
-			"offset":               strconv.Itoa(count),
-			"translatedLanguage[]": `en`, // TODO: add other options
-		})
+	// Create a map of the chapters for dedup
+	chapterMap := make(map[string]Chapter)
+	for _, chapter := range manga.Chapters {
+		chapterMap[chapter.ID] = chapter
+	}
 
-		// If the request failed, pass the error up
-		if err != nil {
-			return err
+	// Loop through the new chapters to insert
+	for _, chapter := range chapters {
+		// Check if the chapter already exists
+		_, exists := chapterMap[chapter.ID]
+
+		// If the chapter doesn't exist, add it
+		if !exists {
+			manga.Chapters = append(manga.Chapters, chapter)
 		}
-
-		// Parse the response
-		var outputManga MangaDex.MangaResponse
-		err = json.Unmarshal(body, &outputManga)
-		if err != nil {
-			glog.Error("Failed to parse response:", err)
-			return err
-		}
-
-		// If mangadex is not happy with the request
-		if outputManga.Result == "error" {
-			err := errors.New(outputManga.Response)
-			glog.Error("Mangadex returned an error when fetching chapters: ", err)
-			return err
-		}
-
-		// Init the Chapters array only once
-		if count == 0 {
-			manga.Chapters = make([]Chapter, outputManga.Total)
-		}
-
-		// Add the Chapters to the manga
-		for i, chapter := range outputManga.Data {
-			outputChapter := Chapter{
-				ID:                 chapter.ID,
-				Title:              chapter.Attributes.Title,
-				Chapter:            chapter.Attributes.Chapter,
-				Volume:             chapter.Attributes.Volume,
-				TranslatedLanguage: chapter.Attributes.TranslatedLanguage,
-				PageNumber:         chapter.Attributes.Pages,
-				// Manga:              manga,
-				Pages: make([]Page, chapter.Attributes.Pages),
-			}
-
-			// If the chapter name is a float, rename to "Chapter #"
-			if _, err := strconv.ParseFloat(outputChapter.Chapter, 64); err == nil {
-				outputChapter.Chapter = "Chapter " + outputChapter.Chapter
-			}
-
-			// If the volume is empty, set it to "EMPTY_VOLUME_NAME"
-			if outputChapter.Volume == "" {
-				outputChapter.Volume = Config.EMPTY_VOLUME_NAME
-			}
-
-			// If the volume is a float, convert it to "Volume #"
-			if _, err := strconv.ParseFloat(outputChapter.Volume, 64); err == nil {
-				outputChapter.Volume = "Volume " + outputChapter.Volume
-			}
-
-			// Find the Scanlation Group
-			for _, relationship := range chapter.Relationships {
-				if relationship.Type == "scanlation_group" {
-					chapter.Relationships[0] = relationship
-					break
-				}
-			}
-
-			manga.Chapters[i+count] = outputChapter
-		}
-
-		// Update the count
-		count += len(outputManga.Data)
-
-		// Update the total
-		total = outputManga.Total
-
-		// Increment the page
-		page++
-
-		// If we have all the Chapters, break
-		if count >= total {
-			glog.Info("Found ", count, " chapters, Done.")
-			break
-		}
-
-		// sleep for a millisecond
-		time.Sleep(time.Millisecond * 200)
 	}
 
 	return nil
@@ -130,7 +54,7 @@ func (manga *Manga) getChapters() error {
 // TODO: prioritize same scanlation group
 // TODO: move language selection here
 // TODO: skip official chapters with non mangadex links
-func (manga *Manga) chapterToVolume() error {
+func (manga *Manga) ChapterToVolume() error {
 	// Init the Volumes array
 	manga.Volumes = make([]Volume, 0)
 
@@ -179,10 +103,10 @@ func (manga *Manga) chapterToVolume() error {
 }
 
 // This downloads all the volumes in a chapter
-func (manga *Manga) download() error {
+func (manga *Manga) Download(API APIProvider, datasaver bool) error {
 	// loop through all the volumes
 	for _, volume := range manga.Volumes {
-		err := volume.download()
+		err := volume.Download(API, datasaver)
 		if err != nil {
 			errText := fmt.Sprintf("failed to download volume: %v", err)
 			err = errors.New(errText)

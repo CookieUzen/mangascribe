@@ -15,7 +15,7 @@ type Volume struct {
 }
 
 // This downloads all the chapters in a volume
-func (volume *Volume) download() error {
+func (volume *Volume) Download(API APIProvider, datasaver bool) error {
 	var volumeName string
 
 	// loops through the chapters
@@ -26,7 +26,7 @@ func (volume *Volume) download() error {
 			volumeName = chapter.Volume
 		}
 
-		err := chapter.download(false)
+		err := chapter.Download(API, datasaver)
 		if err != nil {
 			errText := fmt.Sprintf("failed to download chapter: %v", err)
 			err = errors.New(errText)
