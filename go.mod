@@ -1,4 +1,4 @@
-module mangascribe
+module github.com/CookieUzen/mangascribe
 
 go 1.20
 
