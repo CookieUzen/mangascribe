@@ -9,6 +9,8 @@ import (
 
 type Manga struct {
 	gorm.Model
+	MangaID     uint   `gorm:"primaryKey:true"`
+
 	ID          string `gorm:"primaryKey:false"`
 	Name        string
 	Chapters    []Chapter `gorm:"foreignKey:MangaID"`

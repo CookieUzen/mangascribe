@@ -1,7 +1,6 @@
 package Models
 
 import (
-	"errors"
 	"fmt"
 	"github.com/golang/glog"
 	"gorm.io/gorm"
@@ -9,9 +8,11 @@ import (
 
 type Volume struct {
 	gorm.Model
+	MangaID  uint
+	VolumeID uint `gorm:"primaryKey:true"`
+
 	Name     string
 	Chapters []Chapter `gorm:"foreignKey:VolumeID"`
-	MangaID  uint
 }
 
 // This downloads all the chapters in a volume
@@ -28,8 +29,7 @@ func (volume *Volume) Download(API APIProvider, datasaver bool) error {
 
 		err := chapter.Download(API, datasaver)
 		if err != nil {
-			errText := fmt.Sprintf("failed to download chapter: %v", err)
-			err = errors.New(errText)
+			err = fmt.Errorf("failed to download chapter %s", chapter.ID)
 			glog.Error(err)
 			return err
 		}

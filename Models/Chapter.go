@@ -13,9 +13,11 @@ import (
 
 type Chapter struct {
 	gorm.Model
-	ID                 string `gorm:"primaryKey:false"`
 	VolumeID           uint
 	MangaID            uint
+	ChapterID          uint `gorm:"primaryKey:true"`
+
+	ID                 string `gorm:"primaryKey:false"`
 	Volume             string
 	Chapter            string
 	Title              string
@@ -114,8 +116,7 @@ func (chapter *Chapter) Download(API APIProvider, datasaver bool) error {
 		// Copy the file to the destination directory
 		_, err = io.Copy(origFile, downloadedFile)
 		if err != nil {
-			errText := fmt.Sprintf("Failed to copy file: %w", err)
-			err = errors.New(errText)
+			err = fmt.Errorf("Failed to copy file: %w", err)
 			glog.Error(err)
 			return err
 		}
@@ -136,8 +137,7 @@ func (chapter Chapter) ChapterFolderCreation() (error, string) {
 	dirPath := filepath.Join(".", chapter.Volume, chapter.Chapter)
 	err := os.MkdirAll(dirPath, 0755)
 	if err != nil {
-		errText := fmt.Sprintf("Failed to create directory: %w", err)
-		err = errors.New(errText)
+		err = fmt.Errorf("Failed to create directory: %w", err)
 		glog.Error(err)
 		return err, ""
 	}

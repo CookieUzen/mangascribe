@@ -38,7 +38,7 @@ func main() {
 	db.Create(&manga)
 
 	var manga2 Models.Manga
-	db.First(&manga2, "id = a96676e5-8ae2-425e-b549-7f15dd34a6d8")
+	db.Preload("Volumes").Preload("Chapters.Pages").First(&manga2)
 
 	fmt.Println(manga2.Name)
 

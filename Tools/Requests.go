@@ -78,8 +78,7 @@ func DownloadFile(url string, filename string, directory string) (string, io.Rea
 	// Create the file
 	file, err := os.Create(path.Join(directory, filename))
 	if err != nil {
-		errText := fmt.Sprintf("Failed to create file: %w", err)
-		err = errors.New(errText)
+		err = fmt.Errorf("Failed to create file %s: %w", filename, err)
 		glog.Error(err)
 		return "", nil, err
 	}
@@ -89,9 +88,8 @@ func DownloadFile(url string, filename string, directory string) (string, io.Rea
 		// Send HTTP GET request to the URL
 		response, err := http.Get(url)
 		if err != nil {
-			errText := fmt.Sprintf("Failed to send GET request: %w", err)
-			err = errors.New(errText)
-			debugText := fmt.Sprintf("\nFilename: %w, url: %w\nretrying in %d seconds", filename, url, count)
+			err = fmt.Errorf("Failed to send GET request: %w", err)
+			debugText := fmt.Sprintf("\nFilename: %s, url: %s\nretrying in %d seconds", filename, url, count)
 			glog.Warning(err, debugText)
 			time.Sleep(time.Duration(count) * time.Second)
 			continue
@@ -104,8 +102,7 @@ func DownloadFile(url string, filename string, directory string) (string, io.Rea
 		return checksum, &buf, nil
 	}
 
-	errText := fmt.Sprintf("Failed to download file: %v from %v", filename, url)
-	err = errors.New(errText)
+	err = fmt.Errorf("Failed to download file: %v from %v", filename, url)
 	glog.Error(err)
 	return "", nil, err
 }
@@ -117,8 +114,7 @@ func HashFile(response io.Reader) (string, error) {
 	_, err := io.Copy(crcHash, response)
 
 	if err != nil {
-		errText := fmt.Sprintf("Failed to hash response body: %w", err)
-		err = errors.New(errText)
+		err = fmt.Errorf("Failed to hash response body: %w", err)
 		glog.Error(err)
 		return "", err
 	}
