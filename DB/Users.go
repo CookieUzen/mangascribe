@@ -32,14 +32,14 @@ func VerifyPassword(hashedPassword, password string) (bool, error) {
 func ValidatePassword(password string) error {
 	// If password is too long
 	if len(password) > 72 {
-		err := fmt.Errorf("Password is too long")
+		err := fmt.Errorf("Password is too long (maximum 72 characters)")
 		glog.Info(err)
 		return err
 	}
 
 	// If password is too short
 	if len(password) < 8 {
-		err := fmt.Errorf("Password is too short")
+		err := fmt.Errorf("Password is too short (minimum 8 characters)")
 		glog.Info(err)
 		return err
 	}
@@ -62,6 +62,27 @@ func (dbm *DBManager) IsUsernameTaken(username string) (bool, error) {
 	}
 
 	// If the username is taken
+	if count > 0 {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+
+// Check if an email is taken
+// Returns an error if there was an error checking the database
+// Returns true if the email is taken, false if it is not
+func (dbm *DBManager) IsEmailTaken(email string) (bool, error) {
+	var count int64
+	if err := dbm.DB.Model(&Models.Account{}).Where("email = ?", email).Count(&count).Error; err != nil {
+		// Handle potential database errors if needed
+		err = fmt.Errorf("Error checking if email is taken: %v", err)
+		glog.Error(err)
+		return false, err
+	}
+
+	// If the email is taken
 	if count > 0 {
 		return true, nil
 	}
@@ -94,6 +115,15 @@ func (dbm *DBManager) CreateAccount(account Models.NewAccountRequest) (*Models.A
 		return nil, err
 	} else if taken {
 		err = fmt.Errorf("Username is taken")
+		glog.Info(err)
+		return nil, err
+	}
+
+	// Check if email is taken
+	if taken, err := dbm.IsEmailTaken(account.Email); err != nil {
+		return nil, err
+	} else if taken {
+		err = fmt.Errorf("Email is taken")
 		glog.Info(err)
 		return nil, err
 	}
@@ -181,6 +211,15 @@ func (dbm *DBManager) DeleteAccount(account *Models.Account) error {
 
 // Change the email of an account
 func (dbm *DBManager) ChangeEmail(account *Models.Account, newEmail string) error {
+	// Check if the email is taken
+	if taken, err := dbm.IsEmailTaken(newEmail); err != nil {
+		return err
+	} else if taken {
+		err = fmt.Errorf("Email is taken")
+		glog.Info(err)
+		return err
+	}
+
 	// Change the email
 	if err := dbm.DB.Model(account).Update("email", newEmail).Error; err != nil {
 		err = fmt.Errorf("Error changing email: %v", err)
@@ -214,21 +253,21 @@ func (dbm *DBManager) ChangeUsername(account *Models.Account, newUsername string
 
 // Generate an API key to an account
 // Returns the API key if it was generated successfully
-func (dbm *DBManager) GenerateAPIKey(account *Models.Account, Duration time.Duration) (string, error) {
+func (dbm *DBManager) GenerateAPIKey(account *Models.Account, Duration time.Duration) (*Models.APIKey, error) {
 	// Generate the API key
 	key, err := account.GenerateAPIKey(Duration)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// Add the API key to the database
 	if err := dbm.DB.Model(account).Association("API_Keys").Append(key); err != nil {
 		err = fmt.Errorf("Error adding API key: %v", err)
 		glog.Error(err)
-		return "", err
+		return nil, err
 	}
 
-	return key.Key, nil
+	return key, nil
 }
 
 // Check if an API key is valid
@@ -270,4 +309,16 @@ func (dbm *DBManager) UserFromKey(account *Models.Account, key string) error {
 	// }
 
 	return nil
+}
+
+// Get all API keys associated with an account
+func (dbm *DBManager) GetAPIKeys(account *Models.Account) ([]Models.APIKey, error) {
+	var apiKeys []Models.APIKey
+	if err := dbm.DB.Model(account).Association("API_Keys").Find(&apiKeys); err != nil {
+		err = fmt.Errorf("Error getting API keys: %v", err)
+		glog.Error(err)
+		return nil, err
+	}
+
+	return apiKeys, nil
 }

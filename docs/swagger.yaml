@@ -1,8 +1,152 @@
+definitions:
+  Models.APIKeyJSON:
+    properties:
+      expiration:
+        type: string
+      key:
+        type: string
+    type: object
+  Models.Fail:
+    properties:
+      error:
+        type: string
+    type: object
+  Models.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - password
+    type: object
+  Models.NewAccountRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+      username:
+        type: string
+    required:
+    - email
+    - password
+    - username
+    type: object
+  Models.Response_APIKey:
+    properties:
+      api_key:
+        $ref: '#/definitions/Models.APIKeyJSON'
+    type: object
+  Models.Response_APIKeyList:
+    properties:
+      api_keys:
+        items:
+          $ref: '#/definitions/Models.APIKeyJSON'
+        type: array
+    type: object
 host: localhost:8080
 info:
   contact: {}
   description: This is a mangascribe API server.
   title: Mangascribe API
   version: "1.0"
-paths: {}
+paths:
+  /v1/accounts:
+    get:
+      consumes:
+      - application/json
+      description: generate a new API key for an account
+      parameters:
+      - description: Login user credentials
+        in: body
+        name: accountInfo
+        required: true
+        schema:
+          $ref: '#/definitions/Models.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/Models.Response_APIKey'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/Models.Fail'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/Models.Fail'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/Models.Fail'
+      summary: Generate a new API key for an account
+      tags:
+      - user
+    post:
+      consumes:
+      - application/json
+      description: register a new account by json user
+      parameters:
+      - description: Account information for registration
+        in: body
+        name: accountInfo
+        required: true
+        schema:
+          $ref: '#/definitions/Models.NewAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/Models.Response_APIKey'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/Models.Fail'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/Models.Fail'
+      summary: Register a new account
+      tags:
+      - user
+  /v1/login:
+    post:
+      consumes:
+      - application/json
+      description: login user by json user
+      parameters:
+      - description: Login user credentials
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/Models.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/Models.Response_APIKeyList'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/Models.Fail'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/Models.Fail'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/Models.Fail'
+      summary: Login a user
+      tags:
+      - user
 swagger: "2.0"

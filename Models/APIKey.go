@@ -36,3 +36,11 @@ func (account *Account) GenerateAPIKey(duration time.Duration) (*APIKey, error) 
 func (key *APIKey) IsExpired() bool {
 	return key.ExpiresAt.Before(time.Now())
 }
+
+// Converts an API key to a JSON object
+func (key *APIKey) ToJSON() APIKeyJSON {
+	return APIKeyJSON{
+		Key:        key.Key,
+		Expiration: key.ExpiresAt.Format(time.RFC3339),
+	}
+}
